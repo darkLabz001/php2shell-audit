@@ -1,0 +1,26 @@
+# Intentionally vulnerable/patched PHP lab for validating php2shell-audit.
+# No exploit code is included. Use on an isolated host or network only.
+#
+#   docker compose up -d
+#   p2s scan --target http://127.0.0.1:8081/   # PHP 8.4.26, vulnerable
+#   p2s scan --target http://127.0.0.1:8082/   # PHP 8.4.27, patched
+#   docker compose down
+
+services:
+  php-vulnerable:
+    image: php:8.4.26-apache
+    container_name: p2s-vulnerable
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - ./www:/var/www/html:ro
+    restart: "no"
+
+  php-patched:
+    image: php:8.4.27-apache
+    container_name: p2s-patched
+    ports:
+      - "127.0.0.1:8082:80"
+    volumes:
+      - ./www:/var/www/html:ro
+    restart: "no"

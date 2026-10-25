@@ -1,0 +1,5 @@
+[Thu Oct 17 02:13:57.120411 2026] [php7:error] [pid 4411:tid 139706] [client 203.0.113.44:51234] PHP Fatal error:  Allowed memory size of 134217728 bytes exhausted (tried to allocate 35651584 bytes) in Unknown on line 0
+[Thu Oct 17 02:13:57.220411 2026] [core:error] [pid 4411:tid 139706] [client 203.0.113.44:51234] AH00052: child pid 4412 exit signal Segmentation fault (11)
+[Thu Oct 17 02:14:05.800112 2026] [php7:error] [pid 4413:tid 139707] [client 198.51.100.9:40122] PHP Fatal error:  Allowed memory size of 268435456 bytes exhausted (tried to allocate 4194304 bytes) in /var/www/html/wp-includes/class-wp.php on line 412
+[Thu Oct 17 02:20:00.000000 2026] [php7:error] [pid 4420:tid 139708] [client 192.0.2.77:33001] PHP Fatal error:  Allowed memory size of 134217728 bytes exhausted (tried to allocate 8388608 bytes) in Unknown on line 0
+[Thu Oct 17 02:20:01.000000 2026] [core:error] [pid 4420:tid 139708] [client 192.0.2.77:33001] AH00052: child pid 4421 exit signal Segmentation fault (11)
