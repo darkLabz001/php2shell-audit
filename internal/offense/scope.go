@@ -111,6 +111,10 @@ func (s *Scope) Allows(rawURL string) bool {
 	return false
 }
 
+// MaxTargets bounds one validation run so a scope mistake cannot fan out into
+// a large number of active requests.
+const MaxTargets = 16
+
 // AuthorizeTargets performs the pre-flight checks that must pass before any
 // request is sent: scope membership, scheme, and public-address policy.
 func AuthorizeTargets(ctx context.Context, scope *Scope, targets []string, allowPublic bool) error {
@@ -119,6 +123,9 @@ func AuthorizeTargets(ctx context.Context, scope *Scope, targets []string, allow
 	}
 	if len(targets) == 0 {
 		return errors.New("at least one --target is required")
+	}
+	if len(targets) > MaxTargets {
+		return fmt.Errorf("too many targets: %d (maximum %d)", len(targets), MaxTargets)
 	}
 	for _, raw := range targets {
 		u, err := url.Parse(strings.TrimSpace(raw))

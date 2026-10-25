@@ -374,7 +374,7 @@ Guardrails enforced before the first request:
 - scheme, host, port and path must be covered by a scope URL;
 - the scope needs a case id, operator, future expiry and at least one target;
 - public addresses need `allow_public: true` and `--allow-public`;
-- 1 KiB minimum, 64 MiB maximum, one pressure request, redirects disabled;
+- 16 targets maximum, 1 KiB minimum, 64 MiB maximum, one pressure request, redirects disabled;
 - no retries, no proxy and no public-address default;
 - every run appends JSONL to `out/offense-audit.jsonl` (mode `0600`);
 - authorization failures abort before anything is sent.
