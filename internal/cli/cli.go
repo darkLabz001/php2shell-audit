@@ -595,6 +595,10 @@ func runOffense(args []string) int {
 		fmt.Fprintf(os.Stderr, "p2s: --oom-body: %v\n", err)
 		return ExitError
 	}
+	if oomBody > 0 && !probes["109618"] {
+		fmt.Fprintln(os.Stderr, "p2s: --oom-body ignored because --probe does not include 109618")
+		oomBody = 0
+	}
 	if oomBody > 0 {
 		if !ackDisrupt || !scope.AcknowledgeDisruption {
 			fmt.Fprintln(os.Stderr, "p2s: the pressure probe can disrupt a worker; set acknowledge_disruption in the scope and pass --acknowledge-disruption")
@@ -604,9 +608,6 @@ func runOffense(args []string) int {
 			fmt.Fprintf(os.Stderr, "p2s: --oom-body must be between %d and %d bytes\n", offense.MinOOMBody, offense.MaxOOMBody)
 			return ExitError
 		}
-	}
-	if oomBody > 0 && !probes["109618"] {
-		fmt.Fprintln(os.Stderr, "p2s: --oom-body ignored because --probe does not include 109618")
 	}
 
 	ctx := context.Background()
