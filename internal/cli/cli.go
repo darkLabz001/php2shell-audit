@@ -8,16 +8,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/darkLabz001/php2shell-audit/internal/buildinfo"
 	"github.com/darkLabz001/php2shell-audit/internal/hunt"
 	"github.com/darkLabz001/php2shell-audit/internal/model"
+	"github.com/darkLabz001/php2shell-audit/internal/offense"
 	"github.com/darkLabz001/php2shell-audit/internal/output"
 	"github.com/darkLabz001/php2shell-audit/internal/rules"
 	"github.com/darkLabz001/php2shell-audit/internal/scan"
@@ -52,6 +55,8 @@ func Run(args []string) int {
 		return runHunt(args[1:])
 	case "rules":
 		return runRules(args[1:])
+	case "offense", "offence":
+		return runOffense(args[1:])
 	case "tui", "ui", "console":
 		return runTUI()
 	case "version", "--version", "-v":
@@ -85,6 +90,7 @@ USAGE
   p2s scan   [options]        inventory PHP and verify patch status
   p2s hunt   [options]        hunt logs, web roots and hosts for exploitation
   p2s rules  [options]        emit Sigma/ModSecurity/nginx/YARA/KQL/SPL content
+  p2s offense [options]       authorized CVE-2026-109618/9 validation
   p2s version                 print build information
 
 TUI
@@ -126,6 +132,24 @@ HUNT
   --large-body BYTES      oversized-request threshold (default 2 MiB)
   --evidence DIR          write findings, events and a SHA-256 manifest
 
+OFFENSE (authorized validation)
+  p2s offense --authorize scope.json --target http://127.0.0.1:8081/
+  p2s offense --authorize scope.json --target http://127.0.0.1:8081/ \
+      --oom-body 8MiB --acknowledge-disruption
+
+  --authorize FILE         JSON authorization scope (required)
+  --target URL             endpoint listed in the scope (repeatable)
+  --probe LIST             109618, 109619 or both (default both)
+  --oom-body SIZE          opt-in CVE-2026-109618 pressure body (default 0)
+  --acknowledge-disruption required for --oom-body; may disrupt a worker
+  --allow-public           permit a public target explicitly allowed by scope
+  --audit FILE             JSONL audit log (default out/offense-audit.jsonl)
+  --insecure               skip TLS verification
+  --timeout DURATION       per-request timeout (default 15s)
+
+  Offense stops at validation. It never runs code, writes a webshell or
+  installs persistence, and the pressure probe is capped at 64 MiB.
+
 COMMON
   --format FORMAT         text, json, jsonl or sarif (default text)
   --output FILE           write the report to FILE instead of stdout
@@ -140,8 +164,9 @@ RULES
   --output DIR            write files under DIR; "-" prints to stdout
   --list                  list the files that would be written
 
-All remote checks are passive GET requests. The tool never sends exploit
-payloads, opens reverse shells or installs persistence.
+Scan and hunt remote checks are passive GET requests. Offense mode sends only
+the bounded validation probes described above. The tool never sends exploit
+payloads, opens reverse shells, writes webshells or installs persistence.
 `, buildinfo.Version, DefaultSince.Format(time.RFC3339))
 }
 
@@ -509,6 +534,145 @@ func parseAge(s string) (time.Duration, bool) {
 		return n * 24 * 30, true
 	}
 	return 0, false
+}
+
+// --- offense ---------------------------------------------------------------
+
+func runOffense(args []string) int {
+	fs := newFlagSet("offense", "Authorized, bounded validation of CVE-2026-109618 / CVE-2026-109619.")
+	var (
+		authorize   string
+		targets     stringList
+		probeRaw    string
+		oomRaw      string
+		audit       string
+		allowPublic bool
+		ackDisrupt  bool
+		insecure    bool
+		timeout     time.Duration
+		common      commonFlags
+	)
+	fs.StringVar(&authorize, "authorize", "", "JSON authorization scope (required)")
+	fs.Var(&targets, "target", "endpoint listed in the scope (repeatable)")
+	fs.StringVar(&probeRaw, "probe", "109618,109619", "109618, 109619 or both")
+	fs.StringVar(&oomRaw, "oom-body", "0", "opt-in CVE-2026-109618 pressure body (for example 8MiB)")
+	fs.StringVar(&audit, "audit", offense.DefaultAudit, `JSONL audit log; "-" disables`)
+	fs.BoolVar(&allowPublic, "allow-public", false, "permit a public target explicitly allowed by the scope")
+	fs.BoolVar(&ackDisrupt, "acknowledge-disruption", false, "acknowledge that the pressure probe may disrupt a worker")
+	fs.BoolVar(&insecure, "insecure", false, "skip TLS certificate verification")
+	fs.DurationVar(&timeout, "timeout", 15*time.Second, "per-request timeout")
+	addCommon(fs, &common)
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return ExitOK
+		}
+		return ExitError
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "p2s: unexpected arguments: %s\n", strings.Join(fs.Args(), " "))
+		return ExitError
+	}
+	if timeout <= 0 {
+		fmt.Fprintln(os.Stderr, "p2s: --timeout must be positive")
+		return ExitError
+	}
+	scope, err := offense.LoadScope(authorize)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "p2s: %v\n", err)
+		return ExitError
+	}
+	if len(targets) == 0 {
+		fmt.Fprintln(os.Stderr, "p2s: offense needs at least one --target listed in the scope")
+		return ExitError
+	}
+	probes, err := offense.NormalizeProbes([]string{probeRaw})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "p2s: %v\n", err)
+		return ExitError
+	}
+	oomBody, err := parseByteSize(oomRaw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "p2s: --oom-body: %v\n", err)
+		return ExitError
+	}
+	if oomBody > 0 {
+		if !ackDisrupt || !scope.AcknowledgeDisruption {
+			fmt.Fprintln(os.Stderr, "p2s: the pressure probe can disrupt a worker; set acknowledge_disruption in the scope and pass --acknowledge-disruption")
+			return ExitError
+		}
+		if oomBody < offense.MinOOMBody || oomBody > offense.MaxOOMBody {
+			fmt.Fprintf(os.Stderr, "p2s: --oom-body must be between %d and %d bytes\n", offense.MinOOMBody, offense.MaxOOMBody)
+			return ExitError
+		}
+	}
+	if oomBody > 0 && !probes["109618"] {
+		fmt.Fprintln(os.Stderr, "p2s: --oom-body ignored because --probe does not include 109618")
+	}
+
+	ctx := context.Background()
+	if err := offense.AuthorizeTargets(ctx, scope, targets, allowPublic); err != nil {
+		fmt.Fprintf(os.Stderr, "p2s: authorization refused: %v\n", err)
+		return ExitError
+	}
+	res, err := offense.Run(ctx, offense.Options{
+		Scope:                 scope,
+		Targets:               targets,
+		Timeout:               timeout,
+		Insecure:              insecure,
+		OOMBody:               oomBody,
+		AllowPublic:           allowPublic,
+		AcknowledgeDisruption: ackDisrupt,
+		Probes:                []string{probeRaw},
+		AuditPath:             audit,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "p2s: %v\n", err)
+		return ExitError
+	}
+
+	report := scan.NewReport("offense", buildinfo.Version)
+	report.Findings = res.Findings
+	report.Targets = res.Targets
+	report.Warnings = res.Warnings
+	report.Notes = res.Notes
+	report.Summary = res.Summary
+	return emit(report, common)
+}
+
+// parseByteSize accepts plain bytes or a binary/decimal suffix such as 8MiB.
+func parseByteSize(raw string) (int64, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+	suffixes := []struct {
+		name string
+		mult int64
+	}{
+		{"kib", 1 << 10}, {"mib", 1 << 20}, {"gib", 1 << 30},
+		{"kb", 1000}, {"mb", 1000 * 1000}, {"gb", 1000 * 1000 * 1000},
+		{"k", 1 << 10}, {"m", 1 << 20}, {"g", 1 << 30},
+		{"b", 1},
+	}
+	for _, suffix := range suffixes {
+		if !strings.HasSuffix(s, suffix.name) {
+			continue
+		}
+		number := strings.TrimSpace(strings.TrimSuffix(s, suffix.name))
+		n, err := strconv.ParseInt(number, 10, 64)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("invalid size %q", raw)
+		}
+		if n > math.MaxInt64/suffix.mult {
+			return 0, fmt.Errorf("size %q is too large", raw)
+		}
+		return n * suffix.mult, nil
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("invalid size %q (use bytes, KiB, MiB or GiB)", raw)
+	}
+	return n, nil
 }
 
 // --- rules -----------------------------------------------------------------

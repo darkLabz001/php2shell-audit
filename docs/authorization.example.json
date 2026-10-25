@@ -1,0 +1,10 @@
+{
+  "case_id": "LAB-2026-001",
+  "operator": "your name or team",
+  "expires": "2026-12-31T23:59:59Z",
+  "targets": [
+    "http://127.0.0.1:8081/"
+  ],
+  "allow_public": false,
+  "acknowledge_disruption": false
+}

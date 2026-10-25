@@ -77,6 +77,11 @@ lint: ## Run go vet and check formatting
 fmt: ## Format the source tree
 	gofmt -w .
 
+.PHONY: offense-demo
+offense-demo: build ## Authorized validation against the local Compose lab
+	$(BIN) offense --authorize docs/authorization.example.json \
+		--target http://127.0.0.1:8081/
+
 .PHONY: demo
 demo: build ## Build and run the bundled detection demo
 	$(BIN) scan --local

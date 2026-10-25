@@ -3,3 +3,7 @@ out/
 *.sarif
 case-*/
 .coverage
+
+# Local authorization records
+scope.json
+authorization.json

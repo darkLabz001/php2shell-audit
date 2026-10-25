@@ -14,6 +14,10 @@
    and egress, and looks for cron/systemd/SSH-key persistence. Evidence can be
    exported with a SHA-256 manifest.
 
+An optional, authorization-gated `offense` mode validates the two primitives
+with bounded probes. It does not weaponise them; see
+[`p2s offense`](#p2s-offense--authorized-validation).
+
 ```
 $ p2s scan --local
 php2shell-audit 0.1.0  2026-10-23T04:00:48Z
@@ -32,11 +36,12 @@ TARGETS
 ...
 ```
 
-> **Scope.** This is a defensive tool. It does **not** contain an exploit
-> payload, a reverse shell, a persistence mechanism or an active
-> memory-probing request. Remote checks are passive GET requests (plus
-> optional operator-supplied paths such as an authenticated `phpinfo` page).
-> See [Authorization and safety](#authorization-and-safety).
+> **Scope.** `scan` and `hunt` are defensive: remote checks are passive GET
+> requests (plus optional operator-supplied paths such as an authenticated
+> `phpinfo` page). The optional `offense` mode adds **authorized, bounded
+> validation** of the two CVEs behind a scope file and an audit trail. It still
+> contains no exploit payload, no weaponised RCE chain, no reverse shell and no
+> persistence. See [Authorization and safety](#authorization-and-safety).
 
 ---
 
@@ -121,6 +126,9 @@ sudo p2s hunt --logs /var/log --web-root /var/www --live \
 
 # 4. Give the SOC ready-made detections.
 p2s rules --format all --output ./detections
+
+# 5. Validate an authorized lab endpoint (scope-gated, audited)
+p2s offense --authorize scope.json --target http://127.0.0.1:8081/
 ```
 
 `--fail-on critical` (or `high`, `medium`, ...) makes any command exit **2** when
@@ -147,6 +155,11 @@ single binary keeps its zero-dependency footprint.
 | LIVE RESPONSE | `p2s hunt --live` |
 | WEBSHELL SWEEP | `p2s hunt --web-root DIR --all-files` |
 | SIGNATURE FORGE | `p2s rules --format all` |
+| OFFENSE RANGE | `p2s offense --authorize scope.json --target URL` |
+
+The console's OFFENSE RANGE runs the **safe** validation probes only. The
+disruptive pressure probe is deliberately CLI-only. It requires a scope file
+and typing `AUTHORIZE` before any request is sent.
 
 Scan and hunt results open in a browser with **FINDINGS**, plus **TARGETS**
 and **NOTES** tabs when the report contains them. `enter` opens the full
@@ -159,7 +172,7 @@ dossier for a finding, `e` writes the current report to
 | `↑` `↓` / `j` `k` | move the cursor or scroll |
 | `enter` | execute the operation / open a dossier |
 | `tab` / `←` `→` | switch result tabs |
-| `1`-`9` | jump to a menu operation |
+| `1`-`9`, `0` | jump to a menu operation (0 is the tenth) |
 | `page up` / `page down` / `space` | scroll a document |
 | `e` | export |
 | `esc` | abort a prompt or go back |
@@ -317,6 +330,59 @@ These are **starting points**. Tune thresholds to your traffic, run in detect
 mode first, and remember that the proxy rules are partial mitigations, not a
 fix.
 
+### `p2s offense` — authorized validation
+
+`offense` is the only active mode in the tool. It is opt-in, scope-gated and
+audited. It stops at validation signals: no exploit payload, code execution,
+reverse shell, webshell, credential extraction or persistence.
+
+```sh
+cp docs/authorization.example.json scope.json   # fill in case, owner, target, expiry
+p2s offense --authorize scope.json --target http://127.0.0.1:8081/
+
+# Opt-in disruptive CVE-2026-109618 pressure probe (authorized lab only)
+p2s offense --authorize scope.json --target http://127.0.0.1:8081/ \
+    --oom-body 8MiB --acknowledge-disruption
+```
+
+The scope file is an operator attestation kept with the engagement record:
+
+```json
+{
+  "case_id": "LAB-2026-001",
+  "operator": "your name or team",
+  "expires": "2026-12-31T23:59:59Z",
+  "targets": ["http://127.0.0.1:8081/"],
+  "allow_public": false,
+  "acknowledge_disruption": false
+}
+```
+
+| Probe | Request | What it can tell you |
+| --- | --- | --- |
+| `109618` preflight | one passive GET | version and patch status; never triggers the bug |
+| `109618` pressure | one bounded urlencoded POST, opt-in | timeout, connection drop, 5xx/OOM signature, or 413 rejection |
+| `109619` canary | two tiny multipart uploads plus one GET on a unique `PHPSESSID` | whether both progress canaries persist across worker requests |
+
+The pressure probe can restart a worker. It runs only when the preflight
+confirms a vulnerable or end-of-life build, and it requires
+`acknowledge_disruption: true` in the scope **and** `--acknowledge-disruption`
+on the command line.
+
+Guardrails enforced before the first request:
+
+- scheme, host, port and path must be covered by a scope URL;
+- the scope needs a case id, operator, future expiry and at least one target;
+- public addresses need `allow_public: true` and `--allow-public`;
+- 1 KiB minimum, 64 MiB maximum, one pressure request, redirects disabled;
+- no retries, no proxy and no public-address default;
+- every run appends JSONL to `out/offense-audit.jsonl` (mode `0600`);
+- authorization failures abort before anything is sent.
+
+Findings use the `P2S-OFF-*` IDs and the `validation` category. A green result
+is not proof of safety, and a canary or timeout is not proof of code execution.
+Correlate with server logs and keep the audit trail.
+
 ### `p2s version`
 
 Prints the build version, commit, build date, Go version, CVE IDs and fixed
@@ -395,12 +461,21 @@ p2s scan --local --fail-on high --format sarif --output php2shell.sarif
 
 ## Authorization and safety
 
-Use `scan --target` only against systems you own or are explicitly authorised
-to assess. The remote mode is deliberately passive: one GET per target, plus
-the `--path` values you supply, with a descriptive User-Agent. It does not send
-exploit-shaped payloads, oversized bodies, malformed multipart requests,
-reverse shells or persistence. That boundary is intentional and will not be
-changed.
+Use any remote mode only against systems you own or are explicitly authorised
+to assess. `scan` and `hunt` are deliberately passive: one GET per target, plus
+the `--path` values you supply, with a descriptive User-Agent. They do not send
+exploit payloads, malformed multipart requests, reverse shells or persistence.
+
+`offense` is opt-in and stricter: it requires a written scope record, validates
+the target against that scope, refuses public addresses by default, logs every
+run, and stops at exploitability signals. It does not contain a weaponised RCE
+chain, a webshell, a reverse shell, credential theft or a persistence
+mechanism, and it will not be extended into one. The pressure probe can disrupt
+a worker; treat it as a change-window activity on an isolated lab or staging
+target, never as a routine production check.
+
+The console exposes only the safe offense probes. The disruptive probe exists
+only in the CLI where it is surrounded by explicit acknowledgement flags.
 
 `hunt --live` reads process and file metadata. On a shared or production host,
 review the evidence directory permissions and your incident-response retention
@@ -437,6 +512,7 @@ make lint       # go vet + gofmt check
 make install    # install bin/p2s to /usr/local/bin
 make install-alias  # install to ~/.local/bin and add the php TUI alias
 make tui        # build and open the interactive console
+make offense-demo  # authorized validation against the local Compose lab
 make demo       # build and run the bundled log/webroot demo
 ```
 
@@ -448,6 +524,7 @@ internal/cli/       flag parsing, orchestration, exit codes
 internal/tui/       interactive cyberpunk console (raw ANSI, standard library)
 internal/scan/      local, remote, Docker inventory and config posture
 internal/hunt/      log parsing, detectors, webshell/session/host checks
+internal/offense/   authorization scope and bounded CVE validation probes
 internal/phpver/    version parsing, comparison and fixed-release matrix
 internal/rules/     Sigma/ModSecurity/nginx/YARA/KQL/SPL generators
 internal/output/    text, JSON, JSONL and SARIF renderers
@@ -467,6 +544,9 @@ triage, rules generation, all output formats and CLI timestamp parsing.
 
 - A clean hunt is not proof of safety. Engine-level exploitation can leave no
   application-visible trace.
+- Offense validation is not exploitation. A survived pressure probe can mean the
+  body was below the effective limit; a canary signal still needs server-side
+  confirmation. The probes deliberately stop short of code execution.
 - Log-based burst/correlation is only as good as the fields your proxy and web
   server record. Enable body-size and rate logging before an incident.
 - The remote check cannot verify a version that is hidden. Run the local scan

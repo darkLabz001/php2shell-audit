@@ -21,6 +21,9 @@ type RemoteOptions struct {
 	Insecure  bool
 	Paths     []string
 	UserAgent string
+	// NoRedirect keeps the request on the authorized host. Offense mode sets
+	// it so a redirect cannot move a probe outside the scope file.
+	NoRedirect bool
 }
 
 const defaultUA = "php2shell-audit/0.1 (defensive exposure check; +https://github.com/darkLabz001/php2shell-audit)"
@@ -48,6 +51,9 @@ func Remote(ctx context.Context, rawURL string, opts RemoteOptions) *Result {
 	client := &http.Client{
 		Timeout: timeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if opts.NoRedirect {
+				return http.ErrUseLastResponse
+			}
 			if len(via) >= 5 {
 				return http.ErrUseLastResponse
 			}

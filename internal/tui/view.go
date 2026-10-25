@@ -227,7 +227,7 @@ func (a *App) viewSplash() []string {
 	}
 	content = append(content, "")
 	content = append(content, centerIn(th.paint("PHP ENGINE EXPOSURE RESPONSE CONSOLE", colCyan, ansiBold), a.w))
-	content = append(content, centerIn(th.paint("v"+a.version+"  ·  CVE-2026-109618 / CVE-2026-109619", colDim), a.w))
+	content = append(content, centerIn(th.paint(versionLabel(a.version)+"  ·  CVE-2026-109618 / CVE-2026-109619", colDim), a.w))
 	content = append(content, "")
 
 	for i, b := range boot {
@@ -308,7 +308,7 @@ func (a *App) viewMenu() []string {
 		centerIn(
 			th.paint("PHP ENGINE EXPOSURE RESPONSE CONSOLE", colCyan)+
 				th.paint("  ·  ", colFaint)+th.paint("CVE-2026-109618 / 619", colDim)+
-				th.paint("  ·  v"+a.version, colFaint),
+				th.paint("  ·  "+versionLabel(a.version), colFaint),
 			a.w),
 		"")
 

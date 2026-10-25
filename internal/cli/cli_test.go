@@ -56,6 +56,34 @@ func TestStringList(t *testing.T) {
 	}
 }
 
+func TestParseByteSize(t *testing.T) {
+	cases := map[string]int64{
+		"":     0,
+		"0":    0,
+		"2048": 2048,
+		"4KiB": 4 * 1024,
+		"8MiB": 8 * 1024 * 1024,
+		"2MB":  2 * 1000 * 1000,
+		"1G":   1 << 30,
+		"512b": 512,
+	}
+	for in, want := range cases {
+		got, err := parseByteSize(in)
+		if err != nil {
+			t.Errorf("parseByteSize(%q): %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("parseByteSize(%q) = %d, want %d", in, got, want)
+		}
+	}
+	for _, in := range []string{"-1", "1.5MiB", "nope", "999999999999999999999"} {
+		if _, err := parseByteSize(in); err == nil {
+			t.Errorf("parseByteSize(%q) accepted invalid input", in)
+		}
+	}
+}
+
 func TestRunUnknownCommand(t *testing.T) {
 	if code := Run([]string{"frobnicate"}); code != ExitError {
 		t.Fatalf("exit code = %d, want %d", code, ExitError)

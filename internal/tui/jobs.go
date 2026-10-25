@@ -11,6 +11,7 @@ import (
 
 	"github.com/darkLabz001/php2shell-audit/internal/hunt"
 	"github.com/darkLabz001/php2shell-audit/internal/model"
+	"github.com/darkLabz001/php2shell-audit/internal/offense"
 	"github.com/darkLabz001/php2shell-audit/internal/rules"
 	"github.com/darkLabz001/php2shell-audit/internal/scan"
 )
@@ -225,6 +226,80 @@ func (a *App) menuRules() {
 			return fmt.Sprintf("FORGED %d FILES -> %s", len(files), dir), nil
 		},
 	})
+}
+
+func (a *App) menuOffense() {
+	a.openPrompt(&promptState{
+		title: "OFFENSE RANGE",
+		label: "AUTHORIZATION FILE",
+		hint:  "JSON scope · example: docs/authorization.example.json",
+		submit: func(path string) error {
+			scope, err := offense.LoadScope(path)
+			if err != nil {
+				return err
+			}
+			a.openPrompt(&promptState{
+				title: "OFFENSE RANGE",
+				label: "TARGET URL",
+				hint:  "must be listed in case " + scope.CaseID,
+				submit: func(target string) error {
+					if !strings.Contains(target, "://") {
+						target = "https://" + target
+					}
+					if !scope.Allows(target) {
+						return fmt.Errorf("%s is not listed in case %s", target, scope.CaseID)
+					}
+					a.openPrompt(&promptState{
+						title: "OFFENSE RANGE",
+						label: "TYPE AUTHORIZE",
+						hint:  "case " + scope.CaseID + " · safe validation only · no payloads",
+						submit: func(confirm string) error {
+							if !strings.EqualFold(strings.TrimSpace(confirm), "AUTHORIZE") {
+								return fmt.Errorf("type AUTHORIZE to confirm")
+							}
+							a.startJob(a.offenseJob(scope, target))
+							return nil
+						},
+					})
+					return nil
+				},
+			})
+			return nil
+		},
+	})
+}
+
+func (a *App) offenseJob(scope *offense.Scope, target string) *job {
+	return &job{
+		label: "OFFENSE RANGE",
+		verb:  "authorized validation of CVE-2026-109618 / CVE-2026-109619",
+		phases: []string{
+			"verifying case scope and target policy",
+			"running passive version preflight",
+			"checking the bounded OOM pressure path",
+			"probing upload-progress state with safe canaries",
+			"recording the audit trail",
+		},
+		fn: func(ctx context.Context) (*model.Report, string, error) {
+			res, err := offense.Run(ctx, offense.Options{
+				Scope:     scope,
+				Targets:   []string{target},
+				Timeout:   15 * time.Second,
+				Probes:    []string{"109618", "109619"},
+				AuditPath: offense.DefaultAudit,
+			})
+			if err != nil {
+				return nil, "", err
+			}
+			rep := scan.NewReport("offense", a.version)
+			rep.Findings = res.Findings
+			rep.Targets = res.Targets
+			rep.Warnings = res.Warnings
+			rep.Notes = res.Notes
+			rep.Summary = res.Summary
+			return rep, "", nil
+		},
+	}
 }
 
 func (a *App) menuHelp() {

@@ -254,6 +254,7 @@ func newApp(cfg Config) *App {
 		{"LIVE RESPONSE", "processes · sockets · cron", (*App).menuLive},
 		{"WEBSHELL SWEEP", "score web root files", (*App).menuWebRoot},
 		{"SIGNATURE FORGE", "Sigma / YARA / nginx content", (*App).menuRules},
+		{"OFFENSE RANGE", "authorized CVE validation", (*App).menuOffense},
 		{"INTEL / MANUAL", "advisory + controls", (*App).menuHelp},
 		{"JACK OUT", "leave the grid", func(app *App) { app.quit = true }},
 	}
@@ -320,12 +321,16 @@ func (a *App) handleMenu(k key) {
 		case '?', 'h', 'H':
 			a.menuHelp()
 		default:
-			if k.r >= '1' && k.r <= '9' {
+			switch {
+			case k.r >= '1' && k.r <= '9':
 				idx := int(k.r - '1')
 				if idx < len(a.menu) {
 					a.cursor = idx
 					a.menu[idx].run(a)
 				}
+			case k.r == '0' && len(a.menu) >= 10:
+				a.cursor = 9
+				a.menu[9].run(a)
 			}
 		}
 	}
@@ -726,6 +731,19 @@ func (a *App) emit(lines []string) {
 }
 
 // --- small helpers ---------------------------------------------------------
+
+// versionLabel keeps a friendly build label without doubling the "v" when the
+// build came from a v-prefixed git tag.
+func versionLabel(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "dev"
+	}
+	if strings.HasPrefix(v, "v") {
+		return v
+	}
+	return "v" + v
+}
 
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
